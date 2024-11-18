@@ -1,0 +1,223 @@
+﻿@page "/"
+@using Models
+@using Interfaces
+@using Radzen
+@using Radzen.Blazor
+
+@rendermode InteractiveServer
+@inject IFeedbackService FeedbackService
+@inject ILogger<Home> Logger
+
+<PageTitle>Manage Feedback</PageTitle>
+
+<AuthorizeView Context="authContext">
+    <Authorized>
+        <ErrorBoundary>
+            <ChildContent>
+                <div class="container">
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                            @errorMessage
+                            <button type="button" class="btn-close" @onclick="() => errorMessage = null"></button>
+                        </div>
+                    }
+
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <EditForm Model="@feedback" OnValidSubmit="@HandleValidSubmit" FormName="feedbackForm">
+                                <DataAnnotationsValidator />
+                                <ValidationSummary />
+
+                                <div class="mb-3">
+                                    <label class="form-label">Customer Name:</label>
+                                    <InputText @bind-Value="feedback.CustomerName" class="form-control" />
+                                    <ValidationMessage For="@(() => feedback.CustomerName)" />
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Message:</label>
+                                    <InputTextArea @bind-Value="feedback.Message" class="form-control" rows="3" />
+                                    <ValidationMessage For="@(() => feedback.Message)" />
+                                </div>
+
+                                <button type="submit" class="btn btn-primary" disabled="@isProcessing">
+                                    @if (isProcessing)
+                                    {
+                                        <span class="spinner-border spinner-border-sm" role="status"></span>
+                                        <span class="ms-1">Processing...</span>
+                                    }
+                                    else
+                                    {
+                                        @(feedback.Id == 0 ? "Submit" : "Update")
+                                    }
+                                </button>
+                                @if (feedback.Id != 0)
+                                {
+                                    <button type="button" class="btn btn-secondary" @onclick="ResetForm" disabled="@isProcessing">
+                                        Cancel
+                                    </button>
+                                }
+                            </EditForm>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12">
+                            <RadzenDataGrid Data="@feedbackList" 
+                                          TItem="Feedback" 
+                                          AllowFiltering="true" 
+                                          AllowColumnResize="true" 
+                                          AllowSorting="true" 
+                                          AllowPaging="true" 
+                                          PageSize="10"
+                                          LoadingIndicator="@(isLoading ? true : false)">
+                                <Columns>
+                                    <RadzenDataGridColumn TItem="Feedback" Property="CustomerName" Title="Customer" />
+                                    <RadzenDataGridColumn TItem="Feedback" Property="Message" Title="Message" />
+                                    <RadzenDataGridColumn TItem="Feedback" Property="DateSubmitted" Title="Date">
+                                        <Template Context="data">
+                                            @data.DateSubmitted.ToLocalTime().ToString("g")
+                                        </Template>
+                                    </RadzenDataGridColumn>
+                                    <RadzenDataGridColumn TItem="Feedback" Title="Actions" TextAlign="TextAlign.Center">
+                                        <Template Context="data">
+                                            <RadzenButton Click="@(() => EditFeedback(data))" 
+                                                        ButtonStyle="ButtonStyle.Warning" 
+                                                        Size="ButtonSize.Small" 
+                                                        Text="Edit" 
+                                                        Disabled="@isProcessing"/>
+                                            <RadzenButton Click="@(() => DeleteFeedback(data.Id))" 
+                                                        ButtonStyle="ButtonStyle.Danger" 
+                                                        Size="ButtonSize.Small" 
+                                                        Text="Delete" 
+                                                        Disabled="@isProcessing"/>
+                                        </Template>
+                                    </RadzenDataGridColumn>
+                                </Columns>
+                            </RadzenDataGrid>
+                        </div>
+                    </div>
+                </div>
+            </ChildContent>
+            <ErrorContent Context="errorContext">
+                <div class="alert alert-danger">
+                    <p>An error has occurred: @errorContext.Message</p>
+                    @{
+                        Logger.LogError(errorContext, "Error in Feedback Management page");
+                    }
+                </div>
+            </ErrorContent>
+        </ErrorBoundary>
+    </Authorized>
+    <NotAuthorized>
+        <div class="alert alert-warning">
+            <p style="color:red">USER NOT AUTHORIZED</p>
+        </div>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private Feedback feedback = new();
+    private List<Feedback> feedbackList = new();
+    private string? errorMessage;
+    private bool isProcessing;
+    private bool isLoading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFeedbackAsync();
+    }
+
+    private async Task LoadFeedbackAsync()
+    {
+        try
+        {
+            isLoading = true;
+            var result = await FeedbackService.GetAllFeedbackAsync();
+            if (result.Success)
+            {
+                feedbackList = result.Data ?? new List<Feedback>();
+            }
+            else
+            {
+                errorMessage = result.Error;
+            }
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        try
+        {
+            isProcessing = true;
+            Result<Feedback> result;
+
+            if (feedback.Id == 0)
+            {
+                result = await FeedbackService.AddFeedbackAsync(feedback);
+            }
+            else
+            {
+                result = await FeedbackService.UpdateFeedbackAsync(feedback);
+            }
+
+            if (result.Success)
+            {
+                await LoadFeedbackAsync();
+                ResetForm();
+            }
+            else
+            {
+                errorMessage = result.Error;
+            }
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task DeleteFeedback(int id)
+    {
+        try
+        {
+            isProcessing = true;
+            var result = await FeedbackService.DeleteFeedbackAsync(id);
+
+            if (result.Success)
+            {
+                await LoadFeedbackAsync();
+            }
+            else
+            {
+                errorMessage = result.Error;
+            }
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private void EditFeedback(Feedback item)
+    {
+        feedback = new Feedback
+        {
+            Id = item.Id,
+            CustomerName = item.CustomerName,
+            Message = item.Message,
+            DateSubmitted = item.DateSubmitted
+        };
+    }
+
+    private void ResetForm()
+    {
+        feedback = new();
+        errorMessage = null;
+    }
+}
